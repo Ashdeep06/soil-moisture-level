@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 IoT Automated Irrigation Dashboard</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Paho MQTT WebSockets CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts Inter & Fira Code -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['Fira Code', 'monospace']
+                    },
+                    colors: {
+                        emerald: { 400: '#34d399', 500: '#10b981', 600: '#059669' },
+                        amber: { 400: '#fbbf24', 500: '#f59e0b' },
+                        sky: { 400: '#38bdf8', 500: '#0ea5e9' }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            background: linear-gradient(rgba(15, 23, 42, 0.85), rgba(15, 23, 42, 0.92)), url('images (2).jpg') no-repeat center center fixed;
+            background-size: cover;
+            min-height: 100vh;
+        }
+
+        .glass-card {
+            background: rgba(30, 41, 59, 0.68);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 20px 30px rgba(0, 0, 0, 0.35);
+        }
+
+        .glass-input {
+            background: rgba(15, 23, 42, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #f8fafc;
+        }
+
+        .glass-input:focus {
+            border-color: #10b981;
+            outline: none;
+            box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
+        }
+
+        .terminal-scrollbar::-webkit-scrollbar {
+            width: 8px;
+        }
+        .terminal-scrollbar::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.8);
+            border-radius: 4px;
+        }
+        .terminal-scrollbar::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+
+        @keyframes droplet {
+            0% { transform: translateY(0) scale(1); opacity: 1; }
+            100% { transform: translateY(36px) scale(0.3); opacity: 0; }
+        }
+
+        .water-drop {
+            position: absolute;
+            background: #38bdf8;
+            border-radius: 50%;
+            animation: droplet 1.2s infinite linear;
+        }
+
+        .glow-pump-on {
+            box-shadow: 0 0 25px rgba(56, 189, 248, 0.6), inset 0 0 15px rgba(56, 189, 248, 0.4);
+            border-color: #38bdf8;
+        }
+    </style>
+</head>
+<body class="text-slate-100 flex flex-col min-h-screen">
+
+    <header class="glass-card sticky top-0 z-40 border-b border-slate-700/50 px-4 lg:px-8 py-3.5 flex flex-wrap justify-between items-center gap-4">
+        <div class="flex items-center gap-3">
+            <div class="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/30">
+                <i class="fa-solid fa-microchip text-2xl"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-lg lg:text-xl text-white tracking-wide flex items-center gap-2">
+                    ESP32 IoT Irrigation Dashboard
+                    <span id="connBadge" class="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                        SIMULATION
+                    </span>
+                </h1>
+                <p class="text-xs text-slate-400 flex items-center gap-2">
+                    <span id="statusLed" class="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                    <span id="connDetails">Running Local Simulator (No Physical Hardware Connected)</span>
+                </p>
+            </div>
+        </div>
+
+        <!-- Connection Source Selector & Actions -->
+        <div class="flex flex-wrap items-center gap-2">
+            <div class="bg-slate-900/80 p-1 rounded-xl border border-slate-700/60 flex items-center text-xs font-semibold">
+                <button id="btnSourceSim" onclick="setConnectionSource('SIM')" class="px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-950 transition">
+                    <i class="fa-solid fa-play mr-1"></i>Demo
+                </button>
+                <button id="btnSourceSerial" onclick="setConnectionSource('SERIAL')" class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition">
+                    <i class="fa-solid fa-usb mr-1"></i>Web Serial
+                </button>
+                <button id="btnSourceMqtt" onclick="setConnectionSource('MQTT')" class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition">
+                    <i class="fa-solid fa-network-wired mr-1"></i>MQTT
+                </button>
+                <button id="btnSourceRest" onclick="setConnectionSource('REST')" class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition">
+                    <i class="fa-solid fa-globe mr-1"></i>HTTP API
+                </button>
+            </div>
+
+            <!-- Code Generator Modal Button -->
+            <button onclick="openCodeModal()" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-emerald-400 border border-emerald-500/30 rounded-xl transition flex items-center gap-1.5">
+                <i class="fa-solid fa-code"></i>
+                <span>Get ESP32 Code</span>
+            </button>
+        </div>
+    </header>
+
+    <main class="flex-grow max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+
+        <!-- Protocol Connection Settings Drawer (Dynamic) -->
+        <div id="protocolConfigCard" class="glass-card rounded-2xl p-4 sm:p-5 border-emerald-500/30 transition-all">
+            <!-- Web Serial Config -->
+            <div id="serialConfigPanel" class="hidden flex flex-wrap items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                    <i class="fa-solid fa-plug text-2xl text-emerald-400"></i>
+                    <div>
+                        <h3 class="text-sm font-bold text-white">Direct USB Web Serial API</h3>
+                        <p class="text-xs text-slate-400">Plug ESP32 via USB and connect directly from Chrome/Edge browser</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <select id="serialBaudRate" class="glass-input text-xs rounded-xl px-3 py-2">
+                        <option value="115200">115200 Baud</option>
+                        <option value="9600">9600 Baud</option>
+                        <option value="57600">57600 Baud</option>
+                    </select>
+                    <button id="btnConnectSerial" onclick="toggleWebSerial()" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-xl shadow-lg transition">
+                        Connect Serial Port
+                    </button>
+                </div>
+            </div>
+
+            <!-- MQTT Config -->
+            <div id="mqttConfigPanel" class="hidden space-y-3">
+                <div class="flex justify-between items-center">
+                    <div class="flex items-center gap-2">
+                        <i class="fa-solid fa-wifi text-sky-400"></i>
+                        <h3 class="text-sm font-bold text-white">MQTT over WebSockets Connection</h3>
+                    </div>
+                    <span class="text-xs text-slate-400">Broker: <code class="text-sky-300">broker.hivemq.com</code></span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                    <div>
+                        <label class="block text-slate-400 mb-1">MQTT Host</label>
+                        <input id="mqttHost" type="text" value="broker.hivemq.com" class="w-full glass-input rounded-xl p-2 font-mono">
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 mb-1">WS Port</label>
+                        <input id="mqttPort" type="number" value="8884" class="w-full glass-input rounded-xl p-2 font-mono">
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 mb-1">Moisture Topic</label>
+                        <input id="mqttTopicMoisture" type="text" value="esp32/soil_moisture" class="w-full glass-input rounded-xl p-2 font-mono">
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 mb-1">Pump Command Topic</label>
+                        <input id="mqttTopicPump" type="text" value="esp32/pump_command" class="w-full glass-input rounded-xl p-2 font-mono">
+                    </div>
+                </div>
+                <div class="flex justify-end">
+                    <button id="btnConnectMqtt" onclick="toggleMqttConnection()" class="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs rounded-xl transition">
+                        Connect to MQTT Broker
+                    </button>
+                </div>
+            </div>
+
+            <!-- HTTP REST Config -->
+            <div id="restConfigPanel" class="hidden flex flex-wrap items-center justify-between gap-4">
+                <div class="flex items-center gap-3 flex-1 min-w-[250px]">
+                    <i class="fa-solid fa-network-wired text-amber-400 text-2xl"></i>
+                    <div class="w-full">
+                        <h3 class="text-sm font-bold text-white">ESP32 REST Endpoint Polling</h3>
+                        <input id="restEndpointUrl" type="text" value="http://192.168.1.100/data" class="w-full glass-input rounded-xl px-3 py-1.5 text-xs font-mono mt-1" placeholder="http://<ESP32_IP>/data">
+                    </div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <select id="restPollInterval" class="glass-input text-xs rounded-xl px-3 py-2">
+                        <option value="1000">Poll every 1s</option>
+                        <option value="2000" selected>Poll every 2s</option>
+                        <option value="5000">Poll every 5s</option>
+                    </select>
+                    <button id="btnConnectRest" onclick="toggleRestPolling()" class="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl transition">
+                        Start Polling
+                    </button>
+                </div>
+            </div>
+
+            <!-- Simulation Banner -->
+            <div id="simConfigPanel" class="flex items-center justify-between text-xs text-slate-300">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-vial text-emerald-400"></i>
+                    <span><strong>Demo Simulation Mode Active:</strong> You can test controls, thresholds, and triggers without physical hardware.</span>
+                </div>
+                <span class="text-slate-400 font-mono">Status: READY</span>
+            </div>
+        </div>
+
+        <!-- Middle Section: Visual Gauges & Controls -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+            <!-- Card 1: Soil Moisture Live Meter -->
+            <div class="glass-card rounded-2xl p-6 flex flex-col justify-between">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Soil Moisture</h2>
+                        <p class="text-xs text-slate-500">Capacitive Sensor (GPIO 34)</p>
+                    </div>
+                    <span id="moistureBadge" class="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                        OPTIMAL
+                    </span>
+                </div>
+
+                <!-- Circular Gauge -->
+                <div class="relative my-4 flex justify-center items-center">
+                    <svg class="w-44 h-44 transform -rotate-90" viewBox="0 0 120 120">
+                        <circle cx="60" cy="60" r="50" stroke="rgba(255,255,255,0.08)" stroke-width="10" fill="none"/>
+                        <circle id="gaugeProgress" cx="60" cy="60" r="50" stroke="#10b981" stroke-width="10" 
+                                fill="none" stroke-dasharray="314.15" stroke-dashoffset="157" stroke-linecap="round"
+                                class="transition-all duration-300 ease-out"/>
+                    </svg>
+
+                    <div class="absolute text-center">
+                        <span id="moistureValueText" class="text-4xl font-extrabold text-white">45</span>
+                        <span class="text-xl font-bold text-slate-400">%</span>
+                        <div id="rawAdcText" class="text-xs font-mono text-slate-400 mt-1">ADC: 2255</div>
+                    </div>
+                </div>
+
+                <!-- Manual Slider Simulator -->
+                <div class="space-y-2">
+                    <div class="flex justify-between text-xs text-slate-400 font-medium">
+                        <span>Dry (0%)</span>
+                        <span id="sliderLabel">Override Value</span>
+                        <span>Wet (100%)</span>
+                    </div>
+                    <input type="range" id="moistureSlider" min="0" max="100" value="45" 
+                           class="w-full h-2 bg-slate-700/80 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                           oninput="onMoistureSliderChange(this.value)">
+                </div>
+            </div>
+
+            <!-- Card 2: Water Pump Status & Relay Trigger -->
+            <div id="pumpCard" class="glass-card rounded-2xl p-6 flex flex-col justify-between transition-all duration-300 relative overflow-hidden">
+                <div>
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Water Pump / Relay</h2>
+                            <p class="text-xs text-slate-500">GPIO 26 (Active High)</p>
+                        </div>
+                        <span id="pumpStatusBadge" class="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                            PUMP OFF
+                        </span>
+                    </div>
+
+                    <!-- Pump Animation Display -->
+                    <div class="my-6 flex flex-col items-center justify-center relative min-h-[120px]">
+                        <div id="pumpIconContainer" class="w-20 h-20 rounded-full bg-slate-800/80 border-2 border-slate-700 flex items-center justify-center transition-all duration-300">
+                            <i id="pumpIcon" class="fa-solid fa-faucet-drip text-3xl text-slate-500 transition-colors duration-300"></i>
+                        </div>
+
+                        <div id="waterAnimationContainer" class="absolute top-16 hidden">
+                            <span class="water-drop w-2 h-2 left-[-12px]"></span>
+                            <span class="water-drop w-2.5 h-2.5 left-[0px]" style="animation-delay: 0.3s;"></span>
+                            <span class="water-drop w-2 h-2 left-[12px]" style="animation-delay: 0.6s;"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Manual Relay Override Controls -->
+                <div class="mt-4 pt-4 border-t border-slate-700/50 flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-semibold text-white">Relay Control</p>
+                        <p class="text-[10px] text-slate-400">Send command to ESP32</p>
+                    </div>
+                    <button id="btnPumpToggle" onclick="togglePumpState()" class="px-4 py-2 rounded-xl text-xs font-bold bg-slate-700 text-slate-300 hover:bg-slate-600 transition flex items-center gap-2">
+                        <i class="fa-solid fa-power-off"></i>
+                        <span id="btnPumpToggleText" class="font-semibold">TOGGLE PUMP</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Card 3: Threshold Controls -->
+            <div class="glass-card rounded-2xl p-6 flex flex-col justify-between">
+                <div>
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Automatic Thresholds</h2>
+                        <i class="fa-solid fa-sliders text-slate-400"></i>
+                    </div>
+
+                    <div class="space-y-4">
+                        <!-- Turn ON Threshold -->
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span class="text-slate-300 font-medium">Turn ON Pump Below:</span>
+                                <span id="lblStartThreshold" class="font-bold text-amber-400">30%</span>
+                            </div>
+                            <input type="range" id="startThresholdSlider" min="5" max="50" value="30"
+                                   class="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                                   oninput="updateThresholds()">
+                        </div>
+
+                        <!-- Turn OFF Threshold -->
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span class="text-slate-300 font-medium">Turn OFF Pump Above:</span>
+                                <span id="lblStopThreshold" class="font-bold text-emerald-400">60%</span>
+                            </div>
+                            <input type="range" id="stopThresholdSlider" min="40" max="95" value="60"
+                                   class="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-emerald-400"
+                                   oninput="updateThresholds()">
+                        </div>
+
+                        <div class="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-[11px] text-slate-400 leading-relaxed">
+                            <p class="font-semibold text-slate-200 mb-1"><i class="fa-solid fa-circle-info text-sky-400 mr-1"></i> ESP32 Logic Rule:</p>
+                            Pump turns <strong>ON</strong> when moisture falls below <span class="text-amber-400">30%</span> and stays running until soil moisture reaches <span class="text-emerald-400">60%</span>.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-4 pt-4 border-t border-slate-700/50 flex items-center justify-between">
+                    <span class="text-xs text-slate-400 font-medium">Auto Moisture Drain</span>
+                    <button id="btnAutoDrain" onclick="toggleSoilDrain()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700">
+                        <span id="btnAutoDrainText">Enable Soil Drying</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Section: Live Chart Telemetry & Serial Terminal -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            <!-- Chart.js Live Graph -->
+            <div class="glass-card rounded-2xl p-6 lg:col-span-2 flex flex-col justify-between">
+                <div class="flex flex-wrap justify-between items-center gap-2 mb-4">
+                    <div>
+                        <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-400">Live Telemetry Analytics</h2>
+                        <p class="text-xs text-slate-500">Real-time soil moisture and pump relay history</p>
+                    </div>
+                    <div class="flex items-center gap-4 text-xs font-medium">
+                        <span class="flex items-center gap-1.5 text-emerald-400">
+                            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span> Moisture %
+                        </span>
+                        <span class="flex items-center gap-1.5 text-sky-400">
+                            <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span> Pump (ON/OFF)
+                        </span>
+                    </div>
+                </div>
+
+                <div class="relative h-64 sm:h-72 w-full">
+                    <canvas id="telemetryChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Terminal Output Console -->
+            <div class="glass-card rounded-2xl p-5 flex flex-col justify-between font-mono">
+                <div class="flex justify-between items-center mb-3 pb-2 border-b border-slate-700/60">
+                    <div class="flex items-center gap-2 text-xs font-semibold text-slate-300">
+                        <i class="fa-solid fa-terminal text-emerald-400"></i>
+                        <span>Live Terminal Monitor</span>
+                    </div>
+                    <button onclick="clearTerminal()" class="text-[11px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800 border border-slate-700 transition">
+                        Clear
+                    </button>
+                </div>
+
+                <div id="terminalConsole" class="h-64 sm:h-72 bg-slate-950/90 rounded-xl p-3 text-xs text-emerald-400 overflow-y-auto terminal-scrollbar space-y-1.5 border border-slate-800">
+                    <p class="text-slate-500">--- System Dashboard Initialized ---</p>
+                </div>
+
+                <div class="mt-3 pt-2 border-t border-slate-800 flex justify-between items-center text-[10px] text-slate-500">
+                    <span id="terminalSourceText">Source: LOCAL SIMULATOR</span>
+                    <span id="terminalStatus" class="text-emerald-400 flex items-center gap-1">
+                        <i class="fa-solid fa-circle text-[8px]"></i> ACTIVE
+                    </span>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Arduino / ESP32 Code Generator Modal -->
+    <div id="codeModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+        <div class="glass-card max-w-3xl w-full rounded-2xl border border-slate-700 overflow-hidden flex flex-col max-h-[90vh]">
+            <div class="p-4 sm:p-5 border-b border-slate-700/60 flex justify-between items-center bg-slate-900/60">
+                <div class="flex items-center gap-3">
+                    <i class="fa-solid fa-code-commit text-emerald-400 text-xl"></i>
+                    <div>
+                        <h3 class="font-bold text-white text-sm sm:text-base">ESP32 Firmware Generator</h3>
+                        <p class="text-xs text-slate-400">Copy & flash directly onto your ESP32 board in Arduino IDE</p>
+                    </div>
+                </div>
+                <button onclick="closeCodeModal()" class="text-slate-400 hover:text-white p-2 text-lg">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <!-- Code Mode Selector -->
+            <div class="p-4 bg-slate-900/40 border-b border-slate-800 flex gap-2 overflow-x-auto text-xs font-semibold">
+                <button id="btnCodeMqtt" onclick="switchCodeTab('MQTT')" class="px-3.5 py-1.5 rounded-lg bg-emerald-500 text-slate-950">WiFi + MQTT Mode</button>
+                <button id="btnCodeSerial" onclick="switchCodeTab('SERIAL')" class="px-3.5 py-1.5 rounded-lg text-slate-400 hover:text-white">USB Web Serial Mode</button>
+                <button id="btnCodeRest" onclick="switchCodeTab('REST')" class="px-3.5 py-1.5 rounded-lg text-slate-400 hover:text-white">HTTP REST WebServer</button>
+            </div>
+
+            <div class="p-4 overflow-y-auto font-mono text-xs text-slate-300 bg-slate-950 flex-grow">
+                <pre id="codeSnippetDisplay" class="whitespace-pre-wrap leading-relaxed select-all"></pre>
+            </div>
+
+            <div class="p-4 border-t border-slate-800 bg-slate-900/60 flex justify-between items-center">
+                <span class="text-xs text-slate-400">Board: ESP32-WROOM-32 | Pins: Moisture (34), Relay (26)</span>
+                <button onclick="copyCodeSnippet()" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-xl transition flex items-center gap-2">
+                    <i class="fa-solid fa-copy"></i>
+                    <span id="btnCopyText">Copy Code</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <footer class="text-center py-4 text-xs text-slate-400 border-t border-slate-800/60 mt-auto">
+        ESP32 Real-Time IoT Irrigation System &copy; 2026 | Web Serial, MQTT & REST Enabled
+    </footer>
+
+    <script>
+        // System Parameters
+        const DRY_VALUE = 3200;
+        const WET_VALUE = 1300;
+
+        let startWateringThreshold = 30;
+        let stopWateringThreshold = 60;
+
+        let currentMoisture = 45;
+        let isPumpActive = false;
+        let connectionSource = 'SIM'; // 'SIM', 'SERIAL', 'MQTT', 'REST'
+        let isDrainActive = false;
+
+        // Interval & Driver Handles
+        let autoLoopInterval = null;
+        let drainInterval = null;
+        let telemetryChart = null;
+
+        // Web Serial API Handles
+        let serialPort = null;
+        let serialReader = null;
+        let serialWriter = null;
+
+        // MQTT Handles
+        let mqttClient = null;
+
+        // REST Handle
+        let restInterval = null;
+
+        window.onload = function() {
+            initChart();
+            updateGaugeVisuals();
+            startAutoLoop();
+            logTerminal('--- System Dashboard Initialized ---', 'system');
+        };
+
+        // --- Core Auto Simulation / Driver Loop --- //
+        function startAutoLoop() {
+            if (autoLoopInterval) clearInterval(autoLoopInterval);
+
+            autoLoopInterval = setInterval(() => {
+                if (connectionSource === 'SIM') {
+                    runSimulationStep();
+                }
+            }, 2500);
+        }
+
+        function runSimulationStep() {
+            if (!isPumpActive && currentMoisture < startWateringThreshold) {
+                logTerminal(`Moisture Level: ${Math.round(currentMoisture)}%`, 'data');
+                logTerminal(`Soil dry! Activating water pump...`, 'alert');
+                setPumpState(true, true);
+            } else if (isPumpActive) {
+                if (currentMoisture < stopWateringThreshold) {
+                    currentMoisture = Math.min(100, currentMoisture + 4);
+                    updateGaugeVisuals();
+                    logTerminal(`Watering in progress... Current Moisture: ${Math.round(currentMoisture)}%`, 'info');
+                } else {
+                    setPumpState(false, true);
+                    logTerminal(`Target moisture level attained! Pump deactivated.`, 'success');
+                }
+            } else {
+                logTerminal(`Moisture Level: ${Math.round(currentMoisture)}% | Status: Optimal`, 'normal');
+            }
+
+            addChartData(Math.round(currentMoisture), isPumpActive ? 100 : 0);
+        }
+
+        // --- Connection Source Switcher --- //
+        function setConnectionSource(source) {
+            connectionSource = source;
+
+            // UI Button Styling
+            ['SIM', 'SERIAL', 'MQTT', 'REST'].forEach(s => {
+                const btn = document.getElementById(`btnSource${s.charAt(0) + s.slice(1).toLowerCase()}`);
+                if (s === source) {
+                    btn.className = "px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-950 font-bold transition";
+                } else {
+                    btn.className = "px-3 py-1.5 rounded-lg text-slate-400 hover:text-white transition font-semibold";
+                }
+            });
+
+            // Toggle Config Panels
+            document.getElementById('simConfigPanel').classList.toggle('hidden', source !== 'SIM');
+            document.getElementById('serialConfigPanel').classList.toggle('hidden', source !== 'SERIAL');
+            document.getElementById('mqttConfigPanel').classList.toggle('hidden', source !== 'MQTT');
+            document.getElementById('restConfigPanel').classList.toggle('hidden', source !== 'REST');
+
+            const badge = document.getElementById('connBadge');
+            const details = document.getElementById('connDetails');
+            const termSource = document.getElementById('terminalSourceText');
+
+            if (source === 'SIM') {
+                badge.className = "text-xs px-2.5 py-0.5 rounded-full font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30";
+                badge.innerText = "SIMULATION";
+                details.innerText = "Running Local Simulator (No Physical Hardware Connected)";
+                termSource.innerText = "Source: LOCAL SIMULATOR";
+                logTerminal('Switched to Demo Simulation Mode', 'system');
+            } else if (source === 'SERIAL') {
+                badge.className = "text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30";
+                badge.innerText = "WEB SERIAL";
+                details.innerText = "Direct USB Cable Connection";
+                termSource.innerText = "Source: USB SERIAL (GPIO 34/26)";
+                logTerminal('Switched to Web Serial API Mode', 'system');
+            } else if (source === 'MQTT') {
+                badge.className = "text-xs px-2.5 py-0.5 rounded-full font-semibold bg-sky-500/20 text-sky-400 border border-sky-500/30";
+                badge.innerText = "MQTT WS";
+                details.innerText = "Broker: broker.hivemq.com";
+                termSource.innerText = "Source: MQTT OVER WEBSOCKETS";
+                logTerminal('Switched to MQTT WebSockets Mode', 'system');
+            } else if (source === 'REST') {
+                badge.className = "text-xs px-2.5 py-0.5 rounded-full font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/30";
+                badge.innerText = "HTTP REST";
+                details.innerText = "Polling ESP32 HTTP Server";
+                termSource.innerText = "Source: HTTP REST ENDPOINT";
+                logTerminal('Switched to HTTP REST Endpoint Mode', 'system');
+            }
+        }
+
+        // --- WEB SERIAL API IMPLEMENTATION --- //
+        async function toggleWebSerial() {
+            if (!('serial' in navigator)) {
+                alert("Web Serial API is not supported in this browser. Please use Google Chrome, Microsoft Edge, or Opera.");
+                return;
+            }
+
+            const btn = document.getElementById('btnConnectSerial');
+
+            if (serialPort) {
+                // Disconnect
+                try {
+                    if (serialReader) await serialReader.cancel();
+                    await serialPort.close();
+                } catch (e) { console.error(e); }
+                serialPort = null;
+                btn.innerText = "Connect Serial Port";
+                btn.className = "px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-xl transition";
+                logTerminal('Disconnected from Serial Port', 'alert');
+                return;
+            }
+
+            try {
+                const baud = parseInt(document.getElementById('serialBaudRate').value);
+                serialPort = await navigator.serial.requestPort();
+                await serialPort.open({ baudRate: baud });
+
+                btn.innerText = "Disconnect Serial";
+                btn.className = "px-4 py-2 bg-red-500 hover:bg-red-400 text-white font-bold text-xs rounded-xl transition";
+                logTerminal(`Serial Port Connected @ ${baud} Baud! Listening for ESP32 data...`, 'success');
+
+                readSerialData();
+            } catch (err) {
+                logTerminal(`Serial Error: ${err.message}`, 'alert');
+            }
+        }
+
+        async function readSerialData() {
+            const textDecoder = new TextDecoderStream();
+            const readableStreamClosed = serialPort.readable.pipeTo(textDecoder.writable);
+            const reader = textDecoder.readable.getReader();
+            serialReader = reader;
+
+            let buffer = "";
+
+            try {
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    if (value) {
+                        buffer += value;
+                        let lines = buffer.split('\n');
+                        buffer = lines.pop(); // keep last incomplete chunk
+
+                        for (let line of lines) {
+                            processIncomingHardwareData(line.trim());
+                        }
+                    }
+                }
+            } catch (error) {
+                logTerminal(`Serial Read Exception: ${error.message}`, 'alert');
+            } finally {
+                reader.releaseLock();
+            }
+        }
+
+        async function sendSerialCommand(cmd) {
+            if (serialPort && serialPort.writable) {
+                const encoder = new TextEncoder();
+                const writer = serialPort.writable.getWriter();
+                await writer.write(encoder.encode(cmd + "\n"));
+                writer.releaseLock();
+                logTerminal(`Sent Serial Cmd: ${cmd}`, 'info');
+            }
+        }
+
+        // --- MQTT IMPLEMENTATION --- //
+        function toggleMqttConnection() {
+            const btn = document.getElementById('btnConnectMqtt');
+
+            if (mqttClient && mqttClient.isConnected()) {
+                mqttClient.disconnect();
+                btn.innerText = "Connect to MQTT Broker";
+                btn.className = "px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs rounded-xl transition";
+                logTerminal("MQTT Disconnected", 'alert');
+                return;
+            }
+
+            const host = document.getElementById('mqttHost').value;
+            const port = parseInt(document.getElementById('mqttPort').value);
+            const clientId = "ESP32_WebDash_" + Math.random().toString(16).substr(2, 8);
+
+            mqttClient = new Paho.MQTT.Client(host, Number(port), clientId);
+
+            mqttClient.onConnectionLost = function(responseObject) {
+                logTerminal(`MQTT Connection Lost: ${responseObject.errorMessage}`, 'alert');
+                btn.innerText = "Connect to MQTT Broker";
+                btn.className = "px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs rounded-xl transition";
+            };
+
+            mqttClient.onMessageArrived = function(message) {
+                logTerminal(`MQTT RX [${message.destinationName}]: ${message.payloadString}`, 'info');
+                processIncomingHardwareData(message.payloadString);
+            };
+
+            logTerminal(`Connecting to MQTT Broker ws://${host}:${port}...`, 'system');
+
+            mqttClient.connect({
+                useSSL: port === 8884 || port === 443,
+                onSuccess: function() {
+                    btn.innerText = "Disconnect MQTT";
+                    btn.className = "px-4 py-2 bg-red-500 hover:bg-red-400 text-white font-bold text-xs rounded-xl transition";
+                    logTerminal("MQTT Connected Successfully!", 'success');
+
+                    const moistureTopic = document.getElementById('mqttTopicMoisture').value;
+                    mqttClient.subscribe(moistureTopic);
+                    logTerminal(`Subscribed to topic: ${moistureTopic}`, 'normal');
+                },
+                onFailure: function(err) {
+                    logTerminal(`MQTT Connection Failed: ${err.errorMessage}`, 'alert');
+                }
+            });
+        }
+
+        function publishMqttCommand(cmd) {
+            if (mqttClient && mqttClient.isConnected()) {
+                const topic = document.getElementById('mqttTopicPump').value;
+                const message = new Paho.MQTT.Message(cmd);
+                message.destinationName = topic;
+                mqttClient.send(message);
+                logTerminal(`MQTT TX [${topic}]: ${cmd}`, 'info');
+            }
+        }
+
+        // --- REST API IMPLEMENTATION --- //
+        function toggleRestPolling() {
+            const btn = document.getElementById('btnConnectRest');
+
+            if (restInterval) {
+                clearInterval(restInterval);
+                restInterval = null;
+                btn.innerText = "Start Polling";
+                btn.className = "px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl transition";
+                logTerminal("REST Polling Stopped", 'alert');
+                return;
+            }
+
+            const url = document.getElementById('restEndpointUrl').value;
+            const interval = parseInt(document.getElementById('restPollInterval').value);
+
+            btn.innerText = "Stop Polling";
+            btn.className = "px-4 py-2 bg-red-500 hover:bg-red-400 text-white font-bold text-xs rounded-xl transition";
+            logTerminal(`Polling REST endpoint ${url} every ${interval}ms`, 'system');
+
+            restInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(url, { mode: 'cors' });
+                    const data = await response.json(); // Expected JSON: {"moisture": 42, "pump": 0}
+                    logTerminal(`HTTP REST Data: Moisture=${data.moisture}%, Pump=${data.pump}`, 'data');
+
+                    if (data.moisture !== undefined) {
+                        currentMoisture = data.moisture;
+                        updateGaugeVisuals();
+                    }
+                    if (data.pump !== undefined) {
+                        setPumpState(data.pump == 1 || data.pump === true, false);
+                    }
+                    addChartData(Math.round(currentMoisture), isPumpActive ? 100 : 0);
+                } catch (e) {
+                    logTerminal(`REST Error: Could not reach ${url}`, 'alert');
+                }
+            }, interval);
+        }
+
+        // --- HARDWARE PAYLOAD PARSER --- //
+        function processIncomingHardwareData(rawStr) {
+            logTerminal(`RAW RX: ${rawStr}`, 'data');
+
+            // Regex or substring matching for "Moisture Level: 45%" or JSON format
+            if (rawStr.includes('{') && rawStr.includes('}')) {
+                try {
+                    const json = JSON.parse(rawStr);
+                    if (json.moisture !== undefined) {
+                        currentMoisture = parseFloat(json.moisture);
+                        updateGaugeVisuals();
+                    }
+                    if (json.pump !== undefined) {
+                        setPumpState(json.pump == 1 || json.pump === true, false);
+                    }
+                } catch(e) {}
+            } else {
+                // Check format "Moisture Level: 45%"
+                const match = rawStr.match(/Moisture Level:\s*(\d+)%/i) || rawStr.match(/Moisture:\s*(\d+)/i);
+                if (match) {
+                    currentMoisture = parseFloat(match[1]);
+                    updateGaugeVisuals();
+                }
+
+                if (rawStr.includes("Activating water pump") || rawStr.includes("PUMP_ON")) {
+                    setPumpState(true, false);
+                } else if (rawStr.includes("Pump deactivated") || rawStr.includes("PUMP_OFF")) {
+                    setPumpState(false, false);
+                }
+            }
+
+            addChartData(Math.round(currentMoisture), isPumpActive ? 100 : 0);
+        }
+
+        // --- UI & STATE SYNCHRONIZATION --- //
+        function updateGaugeVisuals() {
+            const val = Math.round(currentMoisture);
+            document.getElementById('moistureValueText').innerText = val;
+            document.getElementById('moistureSlider').value = val;
+
+            const rawAdc = Math.round(DRY_VALUE - ((val / 100) * (DRY_VALUE - WET_VALUE)));
+            document.getElementById('rawAdcText').innerText = `ADC: ${rawAdc}`;
+
+            const circumference = 314.15;
+            const offset = circumference - (val / 100) * circumference;
+            const gaugeProgress = document.getElementById('gaugeProgress');
+            gaugeProgress.style.strokeDashoffset = offset;
+
+            const badge = document.getElementById('moistureBadge');
+            if (val < startWateringThreshold) {
+                gaugeProgress.setAttribute('stroke', '#ef4444');
+                badge.className = "px-2.5 py-1 rounded-full text-xs font-bold bg-red-500/20 text-red-400 border border-red-500/30";
+                badge.innerText = "CRITICAL DRY";
+            } else if (val < stopWateringThreshold) {
+                gaugeProgress.setAttribute('stroke', '#f59e0b');
+                badge.className = "px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30";
+                badge.innerText = "MODERATE";
+            } else {
+                gaugeProgress.setAttribute('stroke', '#10b981');
+                badge.className = "px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30";
+                badge.innerText = "OPTIMAL";
+            }
+        }
+
+        function setPumpState(state, transmit = true) {
+            isPumpActive = state;
+            const pumpCard = document.getElementById('pumpCard');
+            const badge = document.getElementById('pumpStatusBadge');
+            const iconContainer = document.getElementById('pumpIconContainer');
+            const icon = document.getElementById('pumpIcon');
+            const waterAnim = document.getElementById('waterAnimationContainer');
+
+            if (isPumpActive) {
+                pumpCard.classList.add('glow-pump-on');
+                badge.className = "px-2.5 py-1 rounded-full text-xs font-bold bg-sky-500/20 text-sky-400 border border-sky-500/40 animate-pulse";
+                badge.innerText = "PUMP ON (ACTIVE)";
+
+                iconContainer.className = "w-20 h-20 rounded-full bg-sky-500/20 border-2 border-sky-400 flex items-center justify-center transition-all duration-300 shadow-lg shadow-sky-500/30";
+                icon.className = "fa-solid fa-faucet-drip text-3xl text-sky-400 animate-bounce";
+                waterAnim.classList.remove('hidden');
+            } else {
+                pumpCard.classList.remove('glow-pump-on');
+                badge.className = "px-2.5 py-1 rounded-full text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700";
+                badge.innerText = "PUMP OFF";
+
+                iconContainer.className = "w-20 h-20 rounded-full bg-slate-800/80 border-2 border-slate-700 flex items-center justify-center transition-all duration-300";
+                icon.className = "fa-solid fa-faucet-drip text-3xl text-slate-500";
+                waterAnim.classList.add('hidden');
+            }
+
+            if (transmit) {
+                const cmd = isPumpActive ? "PUMP_ON" : "PUMP_OFF";
+                if (connectionSource === 'SERIAL') sendSerialCommand(cmd);
+                if (connectionSource === 'MQTT') publishMqttCommand(cmd);
+            }
+        }
+
+        function togglePumpState() {
+            setPumpState(!isPumpActive, true);
+        }
+
+        function onMoistureSliderChange(val) {
+            currentMoisture = parseFloat(val);
+            updateGaugeVisuals();
+            addChartData(Math.round(currentMoisture), isPumpActive ? 100 : 0);
+        }
+
+        function updateThresholds() {
+            startWateringThreshold = parseInt(document.getElementById('startThresholdSlider').value);
+            stopWateringThreshold = parseInt(document.getElementById('stopThresholdSlider').value);
+
+            document.getElementById('lblStartThreshold').innerText = `${startWateringThreshold}%`;
+            document.getElementById('lblStopThreshold').innerText = `${stopWateringThreshold}%`;
+
+            updateGaugeVisuals();
+        }
+
+        function toggleSoilDrain() {
+            isDrainActive = !isDrainActive;
+            const btn = document.getElementById('btnAutoDrain');
+            const btnText = document.getElementById('btnAutoDrainText');
+
+            if (isDrainActive) {
+                btn.className = "px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40";
+                btnText.innerText = "Drying Enabled";
+
+                drainInterval = setInterval(() => {
+                    if (!isPumpActive && currentMoisture > 5) {
+                        currentMoisture -= 1.8;
+                        updateGaugeVisuals();
+                    }
+                }, 1000);
+            } else {
+                btn.className = "px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700";
+                btnText.innerText = "Enable Soil Drying";
+                if (drainInterval) clearInterval(drainInterval);
+            }
+        }
+
+        // --- TERMINAL LOGGING --- //
+        function logTerminal(message, type = 'normal') {
+            const consoleBox = document.getElementById('terminalConsole');
+            const line = document.createElement('p');
+
+            const now = new Date();
+            const timeStr = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
+
+            let colorClass = "text-slate-300";
+            if (type === 'system') colorClass = "text-amber-400 font-semibold";
+            if (type === 'alert') colorClass = "text-red-400 font-bold";
+            if (type === 'success') colorClass = "text-emerald-400 font-bold";
+            if (type === 'info') colorClass = "text-sky-300";
+            if (type === 'data') colorClass = "text-slate-400";
+
+            line.className = `${colorClass}`;
+            line.innerHTML = `<span class="text-slate-600 font-mono text-[10px] mr-2">[${timeStr}]</span>${message}`;
+
+            consoleBox.appendChild(line);
+            consoleBox.scrollTop = consoleBox.scrollHeight;
+
+            if (consoleBox.children.length > 60) {
+                consoleBox.removeChild(consoleBox.children[0]);
+            }
+        }
+
+        function clearTerminal() {
+            document.getElementById('terminalConsole').innerHTML = '';
+        }
+
+        // --- CHART ENGINE --- //
+        function initChart() {
+            const ctx = document.getElementById('telemetryChart').getContext('2d');
+
+            telemetryChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Moisture Level (%)',
+                            data: [],
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.35,
+                            pointRadius: 2,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'Pump Relay State',
+                            data: [],
+                            borderColor: '#38bdf8',
+                            backgroundColor: 'rgba(56, 189, 248, 0.2)',
+                            borderWidth: 2,
+                            fill: false,
+                            tension: 0,
+                            pointRadius: 0,
+                            stepped: true,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#64748b', font: { size: 10 } }
+                        },
+                        y: {
+                            min: 0,
+                            max: 100,
+                            grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                            ticks: { color: '#64748b', font: { size: 10 } }
+                        },
+                        y1: {
+                            min: 0,
+                            max: 100,
+                            display: false
+                        }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+
+        function addChartData(moistureVal, pumpStateVal) {
+            if (!telemetryChart) return;
+
+            const timeLabel = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+            telemetryChart.data.labels.push(timeLabel);
+            telemetryChart.data.datasets[0].data.push(moistureVal);
+            telemetryChart.data.datasets[1].data.push(pumpStateVal);
+
+            if (telemetryChart.data.labels.length > 20) {
+                telemetryChart.data.labels.shift();
+                telemetryChart.data.datasets[0].data.shift();
+                telemetryChart.data.datasets[1].data.shift();
+            }
+
+            telemetryChart.update();
+        }
+
+        // --- CODE GENERATOR MODAL LOGIC --- //
+        const CODE_SNIPPETS = {
+            MQTT: `// ESP32 WiFi + MQTT Smart Irrigation Firmware
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
+const char* mqtt_server = "broker.hivemq.com";
+
+const int SENSOR_PIN = 34; // Capacitive Soil Sensor
+const int PUMP_PIN   = 26; // Relay Input
+
+const int DRY_VALUE = 3200;
+const int WET_VALUE = 1300;
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  String message = "";
+  for (int i = 0; i < length; i++) message += (char)payload[i];
+  if (message == "PUMP_ON") digitalWrite(PUMP_PIN, HIGH);
+  if (message == "PUMP_OFF") digitalWrite(PUMP_PIN, LOW);
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(PUMP_PIN, OUTPUT);
+  digitalWrite(PUMP_PIN, LOW);
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) delay(500);
+
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
+}
+
+void loop() {
+  if (!client.connected()) {
+    if (client.connect("ESP32_Irrigation_Client")) {
+      client.subscribe("esp32/pump_command");
+    }
+  }
+  client.loop();
+
+  int raw = analogRead(SENSOR_PIN);
+  int constrainedVal = constrain(raw, WET_VALUE, DRY_VALUE);
+  int moisturePercent = map(constrainedVal, DRY_VALUE, WET_VALUE, 0, 100);
+
+  String payload = "{\\"moisture\\":" + String(moisturePercent) + "}";
+  client.publish("esp32/soil_moisture", payload.c_str());
+
+  delay(2000);
+}`,
+            SERIAL: `// ESP32 Direct USB Web Serial API Firmware
+const int SENSOR_PIN = 34;
+const int PUMP_PIN   = 26;
+
+const int DRY_VALUE = 3200;
+const int WET_VALUE = 1300;
+
+void setup() {
+  Serial.begin(115200);
+  analogReadResolution(12);
+  pinMode(PUMP_PIN, OUTPUT);
+  digitalWrite(PUMP_PIN, LOW);
+  Serial.println("ESP32 Serial Ready");
+}
+
+void loop() {
+  // Read Command from Browser Web Serial
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\\n');
+    cmd.trim();
+    if (cmd == "PUMP_ON")  digitalWrite(PUMP_PIN, HIGH);
+    if (cmd == "PUMP_OFF") digitalWrite(PUMP_PIN, LOW);
+  }
+
+  int raw = analogRead(SENSOR_PIN);
+  int constrainedVal = constrain(raw, WET_VALUE, DRY_VALUE);
+  int moisturePercent = map(constrainedVal, DRY_VALUE, WET_VALUE, 0, 100);
+
+  Serial.print("Moisture Level: ");
+  Serial.print(moisturePercent);
+  Serial.println("%");
+
+  delay(2000);
+}`,
+            REST: `// ESP32 WebServer REST API Server
+#include <WiFi.h>
+#include <WebServer.h>
+
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
+
+const int SENSOR_PIN = 34;
+const int PUMP_PIN   = 26;
+
+WebServer server(80);
+
+void handleData() {
+  int raw = analogRead(SENSOR_PIN);
+  int moisture = map(constrain(raw, 1300, 3200), 3200, 1300, 0, 100);
+  bool pumpState = digitalRead(PUMP_PIN);
+
+  String json = "{\\"moisture\\":" + String(moisture) + ",\\"pump\\":" + String(pumpState) + "}";
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "application/json", json);
+}
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(PUMP_PIN, OUTPUT);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) delay(500);
+
+  server.on("/data", handleData);
+  server.begin();
+}
+
+void loop() {
+  server.handleClient();
+}`
+        };
+
+        function openCodeModal() {
+            document.getElementById('codeModal').classList.remove('hidden');
+            switchCodeTab('MQTT');
+        }
+
+        function closeCodeModal() {
+            document.getElementById('codeModal').classList.add('hidden');
+        }
+
+        function switchCodeTab(type) {
+            ['Mqtt', 'Serial', 'Rest'].forEach(t => {
+                const btn = document.getElementById(`btnCode${t}`);
+                if (t.toUpperCase() === type) {
+                    btn.className = "px-3.5 py-1.5 rounded-lg bg-emerald-500 text-slate-950 font-bold";
+                } else {
+                    btn.className = "px-3.5 py-1.5 rounded-lg text-slate-400 hover:text-white font-semibold";
+                }
+            });
+
+            document.getElementById('codeSnippetDisplay').innerText = CODE_SNIPPETS[type];
+        }
+
+        function copyCodeSnippet() {
+            const codeText = document.getElementById('codeSnippetDisplay').innerText;
+            const textarea = document.createElement('textarea');
+            textarea.value = codeText;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+
+            const btnText = document.getElementById('btnCopyText');
+            btnText.innerText = "Copied!";
+            setTimeout(() => { btnText.innerText = "Copy Code"; }, 2000);
+        }
+    </script>
+</body>
+</html>
